@@ -255,8 +255,8 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
   mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* inputTensor) {
     using namespace mps;
     auto dataType = inputTensor.dataType;
-    // auto resultWithInfinity = [mpsGraph constantWithScalar:0.0 dataType:inputTensor.dataType];
-    // auto negInfinityTensor = [mpsGraph constantWithScalar:-1.0 * INFINITY dataType:dataType];
+    auto negInfinityTensor = [mpsGraph constantWithScalar:-1.0 * INFINITY dataType:dataType];
+    auto infinityTensor = [mpsGraph constantWithScalar:INFINITY dataType:dataType];    
     auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:dataType];
     // @autoreleasepool {
       auto zeroTensor = [mpsGraph constantWithScalar:0.0 dataType:dataType];
@@ -266,7 +266,7 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
       auto piTensor = [mpsGraph constantWithScalar:3.14159265358979323846264338327950288 dataType:dataType];
       auto aTensor = [mpsGraph constantWithScalar:0.147 dataType:dataType];
       auto piSquareRootTensor = [mpsGraph constantWithScalar:1.77245385090551602729816748334114518 dataType:dataType];
-      // auto infinityTensor = [mpsGraph constantWithScalar:INFINITY dataType:dataType];
+
       
       auto A = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
       auto B = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor
@@ -291,21 +291,19 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
       auto squareRootDiffTerm = [mpsGraph squareRootWithTensor:CSquaredMinusBDivA name:nil];
       auto finalDiff = [mpsGraph subtractionWithPrimaryTensor:squareRootDiffTerm secondaryTensor:C name:nil];
       auto finalSquareRoot = [mpsGraph squareRootWithTensor:finalDiff name:nil];
-      auto predicateTensor = [mpsGraph greaterThanOrEqualToWithPrimaryTensor:inputTensor
-                                                             secondaryTensor:zeroTensor
-                                                                        name:nil];
-      auto resultPositive = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot
-                                                      secondaryTensor:oneTensor
-                                                                 name:nil];
-      auto resultNegative = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot
-                                                      secondaryTensor:negOneTensor
-                                                                 name:nil];
-      auto estimated = [mpsGraph selectWithPredicateTensor:predicateTensor
-                                       truePredicateTensor:resultPositive
-                                      falsePredicateTensor:resultNegative
-                                                      name:nil];
+      auto isNegative = [mpsGraph lessThanWithPrimaryTensor:inputTensor
+                                                secondaryTensor:zeroTensor
+                                                           name:nil];
+      auto isPositive = [mpsGraph greaterThanWithPrimaryTensor:inputTensor
+                                                 secondaryTensor:zeroTensor
+                                                            name:nil];
 
-      auto currentEstimated = estimated;
+      auto negTensorMask = [mpsGraph multiplicationWithPrimaryTensor:isNegative secondaryTensor: negOneTensor name: nil];
+      auto finalMask = [mpsGraph additionWithPrimaryTensor:negTensorMask secondaryTensor:isPositive name: nil];
+      // we want to multiply finalSquareRoot by -1 if input is negative else by 1
+      finalSquareRoot = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot secondaryTensor: finalMask name: nil];
+
+      auto currentEstimated = finalSquareRoot;
       for (int i = 0; i < 2; ++i) {
         auto estimatedSquaredExp = [mpsGraph
             exponentWithTensor:[mpsGraph
@@ -333,25 +331,27 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
 
 
       }
-      return  currentEstimated;
-      // post processing step to check if we have exactly +1/-1 then we should map to infinity/-infinity
-      // this is because the algorithm might push us on the wrong side of the asymptote due to rounding
 
-      // auto onePredicate = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:oneTensor name:nil];
-      // auto negOnePredicate = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:negOneTensor name:nil];
-      // resultWithInfinity = [mpsGraph selectWithPredicateTensor:[mpsGraph equalWithPrimaryTensor:inputTensor
-      //                                                                           secondaryTensor:oneTensor
-      //                                                                                      name:nil]
-      //                                      truePredicateTensor:infinityTensor
-      //                                     falsePredicateTensor:currentEstimated
-      //                                                     name:nil];
-    // }
-    // return [mpsGraph selectWithPredicateTensor:[mpsGraph equalWithPrimaryTensor:inputTensor
-    //                                                             secondaryTensor:negOneTensor
-    //                                                                        name:nil]
-    //                        truePredicateTensor:negInfinityTensor
-    //                       falsePredicateTensor:resultWithInfinity
-    //                                       name:nil];
+      return  currentEstimated;
+    
+      // Post processing step to check if we have exactly +1/-1 then we should map to infinity/-infinity
+      // This is because the algorithm might push us on the wrong side of the asymptote due to rounding
+
+    auto isOneTensor = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:oneTensor name:nil];
+    auto isNegOneTensor = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:negOneTensor name:nil];
+    auto posInfinityMask = [mpsGraph multiplicationWithPrimaryTensor:isOneTensor secondaryTensor:infinityTensor name:nil];
+    auto negInfinityMask = [mpsGraph multiplicationWithPrimaryTensor:isNegOneTensor secondaryTensor:negInfinityTensor name:nil];
+    auto infinityMask = [mpsGraph additionWithPrimaryTensor:posInfinityMask secondaryTensor:negInfinityMask name:nil];
+    return [mpsGraph selectWithPredicateTensor:infinityMask truePredicateTensor: infinityMask falsePredicateTensor: currentEstimated name: nil];
+
+    // // Multiply the corresponding predicates with the corresponding infinities
+    // auto oneInf = [mpsGraph multiplicationWithPrimaryTensor:isOneTensor secondaryTensor:infinityTensor name:nil];
+    // auto negOneInf = [mpsGraph multiplicationWithPrimaryTensor:isNegOneTensor secondaryTensor:negInfinityTensor name:nil];
+    // // Add the two tensors to get a tensor that has the corresponding infinities based on the inputTensor's value (1 or -1)
+    // auto correspondingInfinities = [mpsGraph additionWithPrimaryTensor:oneInf secondaryTensor:negOneInf name:nil];
+
+    // return [mpsGraph selectWithPredicateTensor:isOneOrNegOneTensor truePredicateTensor: correspondingInfinities falsePredicateTensor: currentEstimated name: nil];
+
   });
 }
 
