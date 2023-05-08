@@ -255,7 +255,6 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
   mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* inputTensor) {
     using namespace mps;
     auto dataType = inputTensor.dataType;
-    auto negInfinityTensor = [mpsGraph constantWithScalar:-1.0 * INFINITY dataType:dataType];
     auto infinityTensor = [mpsGraph constantWithScalar:INFINITY dataType:dataType];    
     auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:dataType];
     // @autoreleasepool {
@@ -297,7 +296,7 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
       auto isPositive = [mpsGraph greaterThanWithPrimaryTensor:inputTensor
                                                  secondaryTensor:zeroTensor
                                                             name:nil];
-
+      
       auto negTensorMask = [mpsGraph multiplicationWithPrimaryTensor:isNegative secondaryTensor: negOneTensor name: nil];
       auto finalMask = [mpsGraph additionWithPrimaryTensor:negTensorMask secondaryTensor:isPositive name: nil];
       // we want to multiply finalSquareRoot by -1 if input is negative else by 1
@@ -337,20 +336,9 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
       // Post processing step to check if we have exactly +1/-1 then we should map to infinity/-infinity
       // This is because the algorithm might push us on the wrong side of the asymptote due to rounding
 
-    auto isOneTensor = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:oneTensor name:nil];
-    auto isNegOneTensor = [mpsGraph equalWithPrimaryTensor:inputTensor secondaryTensor:negOneTensor name:nil];
-    auto posInfinityMask = [mpsGraph multiplicationWithPrimaryTensor:isOneTensor secondaryTensor:infinityTensor name:nil];
-    auto negInfinityMask = [mpsGraph multiplicationWithPrimaryTensor:isNegOneTensor secondaryTensor:negInfinityTensor name:nil];
-    auto infinityMask = [mpsGraph additionWithPrimaryTensor:posInfinityMask secondaryTensor:negInfinityMask name:nil];
-    return [mpsGraph selectWithPredicateTensor:infinityMask truePredicateTensor: infinityMask falsePredicateTensor: currentEstimated name: nil];
-
-    // // Multiply the corresponding predicates with the corresponding infinities
-    // auto oneInf = [mpsGraph multiplicationWithPrimaryTensor:isOneTensor secondaryTensor:infinityTensor name:nil];
-    // auto negOneInf = [mpsGraph multiplicationWithPrimaryTensor:isNegOneTensor secondaryTensor:negInfinityTensor name:nil];
-    // // Add the two tensors to get a tensor that has the corresponding infinities based on the inputTensor's value (1 or -1)
-    // auto correspondingInfinities = [mpsGraph additionWithPrimaryTensor:oneInf secondaryTensor:negOneInf name:nil];
-
-    // return [mpsGraph selectWithPredicateTensor:isOneOrNegOneTensor truePredicateTensor: correspondingInfinities falsePredicateTensor: currentEstimated name: nil];
+    // auto infinityMask = [mpsGraph equalWithPrimaryTensor:[mpsGraph absoluteWithTensor:inputTensor name: nil] secondaryTensor:oneTensor name:nil];
+    // auto result =  [mpsGraph selectWithPredicateTensor:infinityMask truePredicateTensor: infinityTensor falsePredicateTensor: currentEstimated name: nil];
+      //return  result;
 
   });
 }
