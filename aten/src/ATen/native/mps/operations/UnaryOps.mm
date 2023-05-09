@@ -254,39 +254,67 @@ TORCH_IMPL_FUNC(frac_out_mps)(const Tensor& self, const Tensor& output) {
 
 MPSGraphTensor* computeErfinvNewton(MPSGraph* mpsGraph, MPSGraphTensor* currentEstimated, MPSGraphTensor* inputTensor) {
   // currentEstimated = currentEstimated - (erf(currentEstimated) - input) / (2 / sqrt(pi) * exp(-currentEstimated^2))
-    auto dataType = inputTensor.dataType;
-    auto piSquareRootTensor = [mpsGraph constantWithScalar:1.77245385090551602729816748334114518 dataType:dataType];
-    auto epsilonTensor = [mpsGraph constantWithScalar:1e-15 dataType:dataType];
-    auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:dataType];
-    auto twoTensor = [mpsGraph constantWithScalar:2.0 dataType:dataType];
-    auto estimatedSquaredExp = [mpsGraph
-        exponentWithTensor:[mpsGraph
-                              multiplicationWithPrimaryTensor:[mpsGraph
-                                                                  multiplicationWithPrimaryTensor:currentEstimated
-                                                                                  secondaryTensor:negOneTensor
-                                                                                              name:nil]
-                                              secondaryTensor:currentEstimated
-                                                          name:nil]
-                      name:nil];
-    auto numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:currentEstimated
+  auto dataType = inputTensor.dataType;
+  auto piSquareRootTensor = [mpsGraph constantWithScalar:1.77245385090551602729816748334114518 dataType:dataType];
+  auto epsilonTensor = [mpsGraph constantWithScalar:1e-15 dataType:dataType];
+  auto negOneTensor = [mpsGraph constantWithScalar:-1.0 dataType:dataType];
+  auto twoTensor = [mpsGraph constantWithScalar:2.0 dataType:dataType];
+  auto estimatedSquaredExp = [mpsGraph
+      exponentWithTensor:[mpsGraph
+                            multiplicationWithPrimaryTensor:[mpsGraph
+                                                                multiplicationWithPrimaryTensor:currentEstimated
+                                                                                secondaryTensor:negOneTensor
                                                                                             name:nil]
-                                                    secondaryTensor:inputTensor
-                                                                name:nil];
-    auto denominator = [mpsGraph multiplicationWithPrimaryTensor:
-                                                [mpsGraph divisionWithPrimaryTensor:twoTensor
-                                                                    secondaryTensor:piSquareRootTensor
-                                                                              name:nil]
-                                                secondaryTensor:estimatedSquaredExp
-                                                          name:nil];
-    // add episilon to retain inf as otherwise we get nan when divide by 0
-    denominator = [mpsGraph additionWithPrimaryTensor:denominator secondaryTensor:epsilonTensor name:nil];
-    auto gradient = [mpsGraph
-        divisionWithPrimaryTensor: numerator
-                  secondaryTensor:denominator
-                            name:nil];
-
-    return  [mpsGraph subtractionWithPrimaryTensor:currentEstimated secondaryTensor: gradient name:nil];
+                                            secondaryTensor:currentEstimated
+                                                        name:nil]
+                    name:nil];
+  auto numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:currentEstimated
+                                                                                          name:nil]
+                                                  secondaryTensor:inputTensor
+                                                              name:nil];
+  auto denominator = [mpsGraph multiplicationWithPrimaryTensor:
+                                              [mpsGraph divisionWithPrimaryTensor:twoTensor
+                                                                  secondaryTensor:piSquareRootTensor
+                                                                            name:nil]
+                                              secondaryTensor:estimatedSquaredExp
+                                                        name:nil];
+  // add episilon to retain inf as otherwise we get nan when divide by 0
+  denominator = [mpsGraph additionWithPrimaryTensor:denominator secondaryTensor:epsilonTensor name:nil];
+  auto gradient = [mpsGraph
+      divisionWithPrimaryTensor: numerator
+                secondaryTensor:denominator
+                          name:nil];
+  // pass 2 - Cannot just call this function twice outside since the lambda unary_ops
+  // doesn't release memory properly so have to hard code it twice here
+  currentEstimated = [mpsGraph subtractionWithPrimaryTensor:currentEstimated secondaryTensor: gradient name:nil];
+  estimatedSquaredExp = [mpsGraph
+      exponentWithTensor:[mpsGraph
+                            multiplicationWithPrimaryTensor:[mpsGraph
+                                                                multiplicationWithPrimaryTensor:currentEstimated
+                                                                                secondaryTensor:negOneTensor
+                                                                                            name:nil]
+                                            secondaryTensor:currentEstimated
+                                                        name:nil]
+                    name:nil];
+  numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:currentEstimated
+                                                                                          name:nil]
+                                                  secondaryTensor:inputTensor
+                                                              name:nil];
+  denominator = [mpsGraph multiplicationWithPrimaryTensor:
+                                              [mpsGraph divisionWithPrimaryTensor:twoTensor
+                                                                  secondaryTensor:piSquareRootTensor
+                                                                            name:nil]
+                                              secondaryTensor:estimatedSquaredExp
+                                                        name:nil];
+  // add episilon to retain inf as otherwise we get nan when divide by 0
+  denominator = [mpsGraph additionWithPrimaryTensor:denominator secondaryTensor:epsilonTensor name:nil];
+  gradient = [mpsGraph
+      divisionWithPrimaryTensor: numerator
+                secondaryTensor:denominator
+                          name:nil];
+  return  [mpsGraph subtractionWithPrimaryTensor:currentEstimated secondaryTensor: gradient name:nil];
 }
+
 
 TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
   mps::unary_op(self, output, "erfinv_out_mps", ^MPSGraphTensor*(MPSGraph* mpsGraph, MPSGraphTensor* inputTensor) {
@@ -335,13 +363,9 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
       // We want to multiply finalSquareRoot by -1 if input is negative else by 1
       finalSquareRoot = [mpsGraph multiplicationWithPrimaryTensor:finalSquareRoot secondaryTensor: finalMask name: nil];
       // Apply 2 passes of Newton
-      @autoreleasepool {
-        finalSquareRoot = computeErfinvNewton(mpsGraph, finalSquareRoot, inputTensor);
-      }
-      @autoreleasepool {
-        finalSquareRoot = computeErfinvNewton(mpsGraph, finalSquareRoot, inputTensor);
-      }
-      return finalSquareRoot;
+      
+      auto fistPass = computeErfinvNewton(mpsGraph, finalSquareRoot, inputTensor);
+      return computeErfinvNewton(mpsGraph, fistPass, inputTensor);
   });
 }
 
