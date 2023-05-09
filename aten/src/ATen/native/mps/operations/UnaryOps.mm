@@ -262,7 +262,7 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     auto twoTensor = [mpsGraph constantWithScalar:2.0 dataType:dataType];
     auto piTensor = [mpsGraph constantWithScalar:3.14159265358979323846264338327950288 dataType:dataType];
     auto aTensor = [mpsGraph constantWithScalar:0.147 dataType:dataType];
-    auto piSquareRootTensor = [mpsGraph constantWithScalar:1.77245385090551602729816748334114518 dataType:dataType];
+    auto twoDivPiSquareRootTensor = [mpsGraph constantWithScalar:1.12837916709551257389615890312154517 dataType:dataType];
     auto epsilonTensor = [mpsGraph constantWithScalar:1e-15 dataType:dataType];
     auto A = [mpsGraph multiplicationWithPrimaryTensor:inputTensor secondaryTensor:inputTensor name:nil];
     auto B = [mpsGraph logarithmWithTensor:[mpsGraph subtractionWithPrimaryTensor:oneTensor secondaryTensor:A name:nil]
@@ -305,9 +305,7 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     auto numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:currentEstimated name:nil]
                                             secondaryTensor:inputTensor
                                                        name:nil];
-    auto denominator = [mpsGraph multiplicationWithPrimaryTensor:[mpsGraph divisionWithPrimaryTensor:twoTensor
-                                                                                     secondaryTensor:piSquareRootTensor
-                                                                                                name:nil]
+    auto denominator = [mpsGraph multiplicationWithPrimaryTensor:twoDivPiSquareRootTensor
                                                  secondaryTensor:estimatedSquaredExp
                                                             name:nil];
     // add episilon to retain inf as otherwise we get nan when divide by 0
@@ -328,9 +326,7 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output) {
     numerator = [mpsGraph subtractionWithPrimaryTensor:[mpsGraph erfWithTensor:currentEstimated name:nil]
                                        secondaryTensor:inputTensor
                                                   name:nil];
-    denominator = [mpsGraph multiplicationWithPrimaryTensor:[mpsGraph divisionWithPrimaryTensor:twoTensor
-                                                                                secondaryTensor:piSquareRootTensor
-                                                                                           name:nil]
+    denominator = [mpsGraph multiplicationWithPrimaryTensor:twoDivPiSquareRootTensor
                                             secondaryTensor:estimatedSquaredExp
                                                        name:nil];
     // add episilon to retain inf as otherwise we get nan when divide by 0
