@@ -72,7 +72,7 @@ struct TORCH_API MPSHooksInterface {
   virtual void profilerStopTrace() const {
     AT_ERROR("Cannot execute profilerStopTrace() without MPS backend.");
   }
-  
+
   #undef FAIL_MPSHOOKS_FUNC
 };
 

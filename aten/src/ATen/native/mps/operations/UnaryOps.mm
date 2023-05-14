@@ -48,7 +48,6 @@
 #include <ATen/ops/trunc_native.h>
 #endif
 
-
 #include <fmt/format.h>
 
 namespace at::native {
