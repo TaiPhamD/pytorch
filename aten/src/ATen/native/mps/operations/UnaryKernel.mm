@@ -1,38 +1,89 @@
+#define TORCH_ASSERT_ONLY_METHOD_OPERATORS
 #include <ATen/native/DispatchStub.h>
 #include <ATen/native/UnaryOps.h>
+#ifndef AT_PER_OPERATOR_HEADERS
+#include <ATen/Functions.h>
+#include <ATen/NativeFunctions.h>
+#else
 #include <ATen/ops/erfinv_native.h>
+#endif
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
-#include <torch/torch.h>
+#include <torch/mps.h>
 
 #include <fmt/format.h>
 
 namespace at::native {
+
+
+// https://github.com/boostorg/math/blob/c56f334348d5476783fba996d604fc5c6ae980c3/include/boost/math/special_functions/detail/erf_inv.hpp
+
 static const char* ERFINV_OPS_TEMPLATE = R"METAL(
  #include <metal_stdlib>
  using namespace metal;
+
+struct Uniforms {{
+  /*float a[4] = {{  0.886226899f, -1.645349621f,  0.914624893f, -0.140543331f }};
+  float b[4] = {{ -2.118377725f,  1.442710462f, -0.329097515f,  0.012229801f }};
+  float c[4] = {{ -1.970840454f, -1.624906493f,  3.429567803f,  1.641345311f }};
+  float d[2] = {{  3.543889200f,  1.637067800f }};*/
+  float a[4];
+  float b[4];
+  float c[4];
+  float d[2];
+}};
+
+
  kernel void erfinv_mps_kernel(device {0}  *output [[buffer(0)]],
                                device {1}  *input [[buffer(1)]],
+                               constant Uniforms& uniforms [[buffer(2)]],
                          uint index [[thread_position_in_grid]])  {{
 
-  // copysign
-  // INFINITY
-  // NAN
-  // M_PI_F
-  // M_2_SQRTPI_F
-  constexpr float M_PI = 3.14159265358979323846264338327950288f;
-  constexpr float A = 0.147f;
-  const float x_squared = input[index] * input[index];
-  const float log_term = log(1.0f - x_squared);
-  const float common_term = 2.0f / (M_PI * A) + log_term * 0.5f;
 
-  float term = sqrt(sqrt(common_term * common_term - log_term / A) - common_term);
+  const float *a = uniforms.a;
+  const float *b = uniforms.b;
+  const float *c = uniforms.c;
+  const float *d = uniforms.d;
+  float y = input[index];
+  float x, z, num, dem; /*working variables */
+  /* coefficients in rational expansion */
 
-  float sign = input[index] > 0.0f ? 1.0f : -1.0f;
-  output[index] = sign * term;
+  float y_abs = abs(y);
+  if(y_abs > 1.0f){{
+    output[index] = NAN;
+    return;
+  }}
+  if(y_abs == 1.0f){{
+    output[index] = copysign(INFINITY, y);
+    return;
+  }}
+  if(y_abs <= 0.7f) {{
+    z = y * y;
+    num = (((a[3]*z + a[2])*z + a[1])*z + a[0]);
+    dem = ((((b[3]*z + b[2])*z + b[1])*z +b[0]) * z + 1.0f);
+    x = y * num / dem;
+  }}
+  else{{
+    z = sqrt(-1.0f*log((1.0-y_abs)/2.0));
+    num = ((c[3]*z + c[2])*z + c[1]) * z + c[0];
+    dem = (d[1]*z + d[0])*z + 1.0f;
+    x = copysign(num, y) / dem;
+  }} 
+
+  // 2 round newton - erf(x)
+  //
+
+  output[index] = x;
 }})METAL";
 
+struct Uniforms {
+  float a[4] = { 0.886226899f, -1.645349621f,  0.914624893f, -0.140543331f };
+  float b[4] = { -2.118377725f,  1.442710462f, -0.329097515f,  0.012229801f };
+  float c[4] = { -1.970840454f, -1.624906493f,  3.429567803f,  1.641345311f };
+  float d[2] = {  3.543889200f,  1.637067800f };
+
+};
 const std::string& getMetalType(const c10::ScalarType& t) {
   // Mapping from c10::ScalarType to integral type that can be used for bitwise ops
   // As bitwise ops sign-agnostic map signed/unsigned char and boolean to the same type
