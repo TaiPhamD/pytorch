@@ -206,9 +206,9 @@ TORCH_IMPL_FUNC(erfinv_out_mps)(const Tensor& self, const Tensor& output_) {
   Tensor output = output_;
   // do type check to make sure it's a scalar bool, int16, int32, float32,
   TORCH_CHECK(input.scalar_type() != ScalarType::Double, "MPS does not support erfinv op with scalar type: Double");
-  if (input.dim() == 0) {
-    return;
-  }
+  // if (input.dim() == 0) {
+  //   return;
+  // }
   uint32_t length = output.numel();
   if (length == 0) {
     return;
